@@ -47,10 +47,13 @@ Layer g_layer;
 GBitmap g_bmp;
 
 // Pixel data for the bitmap
-char g_bmpdata[ROW_SIZE(160)*168];
+char g_bmpdata[ROW_SIZE(224)*168];
 
-// Whether we've started drawing the sunlight overlay
-int g_inited = 0;
+// Flag that indicates the window is fully visible
+int g_loaded = 0;
+
+// Flag that signals a need to regenerate the overlay
+int g_needs_refresh = 0;
 
 // The time-of-day offset (0-215)
 int g_time_offset = 0;
@@ -58,8 +61,6 @@ int g_time_offset = 0;
 // The time-of-year offset (0-365)
 int g_year_offset = 0;
 
-// Offset in pixels 0-72
-int g_x_offset = 0;
 
 // Main rendering function for our only layer
 void layer_update_callback(Layer *me, GContext* ctx) {
@@ -75,21 +76,21 @@ void layer_update_callback(Layer *me, GContext* ctx) {
     // Use the full screen
     destination.origin.x = 0;
     destination.origin.y = 0;
-    destination.size.w = 144;
+    destination.size.w = 216;
     destination.size.h = 168;
 
-    if (g_inited) {
+    if (g_needs_refresh) {
         // Render the image in WORLD_MAP_IMAGE into the bmpdata bitmap
-        memset(g_bmpdata, 0, ROW_SIZE(160)*168);
-        for (x = 0; x < 144; x++) {
+        memset(g_bmpdata, 0, ROW_SIZE(224)*168);
+        for (x = 0; x < 216; x++) {
             // Calculate the Earth's daily rotation
-            int x_offset = x + g_x_offset + g_time_offset + (g_year_offset * 59 / 100);
+            int x_offset = x + g_time_offset + (g_year_offset * 59 / 100);
             float cos_theta = THETA_TABLE[x_offset % 216];
             float sin_theta = THETA_TABLE[(x_offset + 54) % 216];
 
             for (y = 0; y < 168; y++) {
                 // Get the input map's pixel value
-                int addr = (x + g_x_offset) + y * 216;
+                int addr = x + y * 216;
                 char in_val = WORLD_MAP_IMAGE[addr/8] & (1<<(addr%8));
 
                 // Calculate the latitude
@@ -118,7 +119,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
                 // If necessary, set the appropriate bit in the output bitmap
                 if (val == 0) {
-                    g_bmpdata[y*ROW_SIZE(160) + x/8] |= (1 << (x%8));
+                    g_bmpdata[y*ROW_SIZE(224) + x/8] |= (1 << (x%8));
                 }
             }
         }
@@ -126,22 +127,37 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
     // Render the map
     graphics_draw_bitmap_in_rect(ctx, &g_bmp, destination);
+
+    // Unset the "needs refresh" flag
+    g_needs_refresh = 0;
 }
 
+
+// Animate the layer position to a given X offset
+void animate_layer(int destination) {
+    static PropertyAnimation prop_ani;
+    static GRect prop_rect = {
+        .origin = {
+            .x = 0,
+            .y = 0
+        },
+        .size = {
+            .w = 216,
+            .h = 168
+        }
+    };
+    prop_rect.origin.x = destination;
+    property_animation_init_layer_frame(&prop_ani, &g_layer, NULL, &prop_rect);
+    prop_ani.animation.duration_ms = 1000; // 1 second animation
+    animation_schedule(&prop_ani.animation);
+}
 
 // Handle click on the "up" button (scroll left)
 void up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
     (void)recognizer;
     (void)window;
 
-    if (g_x_offset >= 36) {
-        g_x_offset -= 36;
-    } else {
-        g_x_offset = 0;
-    }
-
-    // Trigger a refresh
-    layer_mark_dirty(&g_layer);
+    animate_layer(0);
 }
 
 
@@ -150,14 +166,7 @@ void down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
     (void)recognizer;
     (void)window;
 
-    if (g_x_offset <= 36) {
-        g_x_offset += 36;
-    } else {
-        g_x_offset = 72;
-    }
-
-    // Trigger a refresh
-    layer_mark_dirty(&g_layer);
+    animate_layer(-72);
 }
 
 
@@ -210,13 +219,13 @@ void handle_init(AppContextRef ctx) {
     layer_add_child(&g_window.layer, &g_layer);
 
     // Initialize the bitmap structure
-    init_bitmap(&g_bmp, 160, 168, g_bmpdata);
+    init_bitmap(&g_bmp, 224, 168, g_bmpdata);
 
     // Render just the map while slide-in animation is happening,
     for (y = 0; y < 168; y++) {
-        memcpy(&g_bmpdata[y*ROW_SIZE(160)], &WORLD_MAP_IMAGE[y*27], ROW_SIZE(160));
+        memcpy(&g_bmpdata[y*ROW_SIZE(224)], &WORLD_MAP_IMAGE[y*27], ROW_SIZE(224));
     }
-    for (y = 0; y < 168*ROW_SIZE(160); y++) {
+    for (y = 0; y < 168*ROW_SIZE(224); y++) {
         g_bmpdata[y] ^= 0xFF;
     }
 
@@ -227,31 +236,37 @@ void handle_init(AppContextRef ctx) {
 
 // Helper to update internal state based on the current time & date
 void update_time(PblTm *time) {
-    int utc_hour;
+    // Don't do anything until we're fully visible on-screen
+    if (g_loaded) {
+        int utc_hour;
 
-    // Time-of-year offset (0-365)
-    g_year_offset = time->tm_yday % 365;
+        // Time-of-year offset (0-365)
+        g_year_offset = time->tm_yday % 365;
 
-    // Time-of-day offset (0-216)
-    utc_hour = time->tm_hour - TZ_OFFSET + 12;
-    g_time_offset = (((time->tm_min + utc_hour * 60) * 3) / 20) % 216;
+        // Time-of-day offset (0-216)
+        utc_hour = time->tm_hour - TZ_OFFSET + 12;
+        g_time_offset = (((time->tm_min + utc_hour * 60) * 3) / 20) % 216;
 
-    // Trigger a refresh
-    layer_mark_dirty(&g_layer);
+        // Trigger a refresh
+        g_needs_refresh = 1;
+        layer_mark_dirty(&g_layer);
+    }
 }
 
 
 // Handle timer callbacks
 void handle_timer(AppContextRef ctx, AppTimerHandle handle, uint32_t cookie) {
     if (cookie == TIMER_ID_REFRESH) {
+        // Indicate that we can start expensive rendering
+        g_loaded = 1;
+
+        // Indicate we need to rendered overlay
+        g_needs_refresh = 1;
+
+        // Update the time-based state
         PblTm time;
         get_time(&time);
         update_time(&time);
-
-        // Start rendering overlay
-        g_inited = 1;
-
-        layer_mark_dirty(&g_layer);
     }
 }
 
