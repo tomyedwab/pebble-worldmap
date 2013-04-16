@@ -16,7 +16,7 @@
 PBL_APP_INFO(MY_UUID,
              "World Map", "Tom Yedwab",
              1, 0, /* App version */
-             DEFAULT_MENU_ICON,
+             RESOURCE_ID_IMAGE_MENU_ICON,
              APP_INFO_STANDARD_APP);
 
 
@@ -151,6 +151,7 @@ void animate_layer(int destination) {
     prop_ani.animation.duration_ms = 1000; // 1 second animation
     animation_schedule(&prop_ani.animation);
 }
+
 
 // Handle click on the "up" button (scroll left)
 void up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
