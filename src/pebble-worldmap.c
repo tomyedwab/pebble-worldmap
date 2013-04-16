@@ -9,10 +9,6 @@
 // Enter the current time zone (ignoring daylight savings)
 #define TZ_OFFSET -8 // PST
 
-// Offset in pixels 0-72
-// TODO - Make the buttons change this
-#define X_OFFSET 0
-
 // Can be used to distinguish between multiple timers in your app
 #define TIMER_ID_REFRESH 1
 
@@ -62,6 +58,9 @@ int g_time_offset = 0;
 // The time-of-year offset (0-365)
 int g_year_offset = 0;
 
+// Offset in pixels 0-72
+int g_x_offset = 0;
+
 // Main rendering function for our only layer
 void layer_update_callback(Layer *me, GContext* ctx) {
     (void)me;
@@ -84,13 +83,13 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         memset(g_bmpdata, 0, ROW_SIZE(160)*168);
         for (x = 0; x < 144; x++) {
             // Calculate the Earth's daily rotation
-            int x_offset = x + X_OFFSET + g_time_offset + (g_year_offset * 59 / 100);
+            int x_offset = x + g_x_offset + g_time_offset + (g_year_offset * 59 / 100);
             float cos_theta = THETA_TABLE[x_offset % 216];
             float sin_theta = THETA_TABLE[(x_offset + 54) % 216];
 
             for (y = 0; y < 168; y++) {
                 // Get the input map's pixel value
-                int addr = (x + X_OFFSET) + y * 216;
+                int addr = (x + g_x_offset) + y * 216;
                 char in_val = WORLD_MAP_IMAGE[addr/8] & (1<<(addr%8));
 
                 // Calculate the latitude
@@ -129,6 +128,69 @@ void layer_update_callback(Layer *me, GContext* ctx) {
     graphics_draw_bitmap_in_rect(ctx, &g_bmp, destination);
 }
 
+
+// Handle click on the "up" button (scroll left)
+void up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+    (void)recognizer;
+    (void)window;
+
+    if (g_x_offset >= 36) {
+        g_x_offset -= 36;
+    } else {
+        g_x_offset = 0;
+    }
+
+    // Trigger a refresh
+    layer_mark_dirty(&g_layer);
+}
+
+
+// Handle click on the "down" button (scroll right)
+void down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+    (void)recognizer;
+    (void)window;
+
+    if (g_x_offset <= 36) {
+        g_x_offset += 36;
+    } else {
+        g_x_offset = 72;
+    }
+
+    // Trigger a refresh
+    layer_mark_dirty(&g_layer);
+}
+
+
+// Handle click on the "select" button (currently unused)
+void select_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+    (void)recognizer;
+    (void)window;
+}
+
+
+// Handle long press on the "select" button (currently unused)
+void select_long_click_handler(ClickRecognizerRef recognizer, Window *window) {
+  (void)recognizer;
+  (void)window;
+}
+
+
+// Register our input handlers
+void click_config_provider(ClickConfig **config, Window *window) {
+  (void)window;
+
+  config[BUTTON_ID_SELECT]->click.handler = (ClickHandler) select_single_click_handler;
+
+  config[BUTTON_ID_SELECT]->long_click.handler = (ClickHandler) select_long_click_handler;
+
+  config[BUTTON_ID_UP]->click.handler = (ClickHandler) up_single_click_handler;
+  config[BUTTON_ID_UP]->click.repeat_interval_ms = 100;
+
+  config[BUTTON_ID_DOWN]->click.handler = (ClickHandler) down_single_click_handler;
+  config[BUTTON_ID_DOWN]->click.repeat_interval_ms = 100;
+}
+
+
 // Initialization routine
 void handle_init(AppContextRef ctx) {
     (void)ctx;
@@ -138,6 +200,9 @@ void handle_init(AppContextRef ctx) {
     window_init(&g_window, "WorldMap");
     g_window.is_fullscreen = 1;
     window_stack_push(&g_window, true /* Animated */);
+
+    // Attach our desired button functionality
+    window_set_click_config_provider(&g_window, (ClickConfigProvider) click_config_provider);
 
     // Init the layer for the map display
     layer_init(&g_layer, g_window.layer.frame);
