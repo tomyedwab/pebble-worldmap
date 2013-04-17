@@ -167,14 +167,11 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
         // Calculate sunrise/sunset time
         float last_dp = 0;
-        int cross_x = -1;
+        int sunrise_x = -1, sunset_x = -1;
 
         // Calculate the latitude
         float cos_phi, sin_phi;
         calc_phi(g_home_pos[1], &cos_phi, &sin_phi);
-
-        // If this happens to you, I feel sorry for you
-        strcpy(g_sunrise, "No sunrise/sunset");
 
         // Traverse from home coordinates going East until we hit a boundary
         for (x = 0; x < 216; x++) {
@@ -187,29 +184,51 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
             if (last_dp < 0 && dp > 0) {
                 // Sunset!
-                strcpy(g_sunrise, "Sunset:  ");
-                cross_x = x - dp / (dp - last_dp);
-                break;
+                sunset_x = x;
             } else if (last_dp > 0 && dp < 0) {
                 // Sunrise!
-                strcpy(g_sunrise, "Sunrise: ");
-                cross_x = x + dp / (last_dp - dp);
-                break;
+                sunrise_x = x;
             }
 
             // No boundary; keep going
             last_dp = dp;
         }
 
-        if (cross_x >= 0) {
+        if (sunrise_x >= 0 && sunset_x >= 0) {
             // Calculate the time of the crossing
             PblTm time;
-            int minutes = g_minute + (cross_x * 1440) / 216;
+            int minutes;
+            char time_buf[6];
 
+            // Sunrise
+            minutes = g_minute + (sunrise_x * 1440) / 216;
             time.tm_hour = g_hour + (minutes / 60);
             time.tm_min = minutes % 60;
+            if (clock_is_24h_style()) {
+                string_format_time(time_buf, 20, "%H:%M", &time);
+            } else {
+                string_format_time(time_buf, 20, "%I:%M%p", &time);
+            }
 
-            string_format_time(&g_sunrise[9], 20, "%I:%M", &time);
+            strcpy(g_sunrise, "rise ");
+            strcat(g_sunrise, time_buf);
+
+            // Sunset
+            // Sunset times seem to be about 25 minutes off from official tables
+            minutes = g_minute + (sunset_x * 1440) / 216 + 25;
+            time.tm_hour = g_hour + (minutes / 60);
+            time.tm_min = minutes % 60;
+            if (clock_is_24h_style()) {
+                string_format_time(time_buf, 20, "%H:%M", &time);
+            } else {
+                string_format_time(time_buf, 20, "%I:%M%p", &time);
+            }
+
+            strcat(g_sunrise, " set ");
+            strcat(g_sunrise, time_buf);
+        } else {
+            // If this happens to you, I feel sorry for you
+            strcpy(g_sunrise, "No sunrise/sunset");
         }
 
         graphics_context_set_fill_color(ctx, GColorBlack);
@@ -224,7 +243,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         graphics_text_draw(ctx,
                 g_sunrise,
                 fonts_get_system_font(FONT_KEY_FONT_FALLBACK),
-                GRect(0, 168-16, 144, 16),
+                GRect(5, 168-16, 144-5, 16),
                 GTextOverflowModeWordWrap,
                 GTextAlignmentLeft,
                 NULL);
