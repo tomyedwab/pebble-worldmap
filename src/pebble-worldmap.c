@@ -4,14 +4,7 @@
 
 #include "worldmap_image.h"
 #include "angle_tables.h"
-
-// Unfortunately the watch doesn't store time zone information
-// Enter the current time zone (ignoring daylight savings)
-#define TZ_OFFSET -8 // PST
-
-// This is the home latitude and longitude, for calculating sunrise/sunset times
-#define HOME_LATITUDE    37.3f
-#define HOME_LONGITUDE -121.9f
+#include "config.h"
 
 // Can be used to distinguish between multiple timers in your app
 #define TIMER_ID_REFRESH 1

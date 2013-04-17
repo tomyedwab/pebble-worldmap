@@ -7,7 +7,9 @@ It looks like this:
 
 ![](/screenshot.png)
 
-You can scroll left & right with the UP/DOWN buttons.
+You can scroll left & right with the UP/DOWN buttons. SELECT button toggles a display of sunrise and sunset times for your location.
+
+Configure your location (longitude/latitude) and time zone by editing src/config.h.
 
 Based loosely on the concepts in [Math behind a world sunlight map][1].
 
