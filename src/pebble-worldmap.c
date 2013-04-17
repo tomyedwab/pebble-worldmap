@@ -9,6 +9,10 @@
 // Enter the current time zone (ignoring daylight savings)
 #define TZ_OFFSET -8 // PST
 
+// This is the home latitude and longitude, for calculating sunrise/sunset times
+#define HOME_LATITUDE    37.3f
+#define HOME_LONGITUDE -121.9f
+
 // Can be used to distinguish between multiple timers in your app
 #define TIMER_ID_REFRESH 1
 
@@ -55,12 +59,46 @@ int g_loaded = 0;
 // Flag that signals a need to regenerate the overlay
 int g_needs_refresh = 0;
 
+// Enable drawing of sunrise/sunset times
+int g_draw_sunrise = 0;
+
+// Transformed latitude/longitude
+int g_home_pos[] = {0, 0};
+
 // The time-of-day offset (0-215)
 int g_time_offset = 0;
 
 // The time-of-year offset (0-365)
 int g_year_offset = 0;
 
+// Stored time information
+int g_hour = 0;
+int g_minute = 0;
+
+
+// Calculate the longitude cos/sin
+void calc_theta(int x_offset, float *cos_theta, float *sin_theta) {
+    int offset;
+    offset = x_offset % 216;
+    if (offset > 108) offset = 216 - offset;
+    *cos_theta = THETA_TABLE[offset];
+    offset = (x_offset + 54) % 216;
+    if (offset > 108) offset = 216 - offset;
+    *sin_theta = THETA_TABLE[offset];
+}
+
+// Calculate the latitude cos/sin
+void calc_phi(int y, float *cos_phi, float *sin_phi) {
+    *cos_phi = PHI_COS_TABLE[y];
+    *sin_phi = PHI_SIN_TABLE[y];
+}
+
+// Calculate the dot product of the position on the earth and the direction to the sun:
+// <cos(phi)*cos(theta)*cos(alpha) + sin(phi)*sin(alpha), cos(phi)*sin(theta)> * <cos_year, sin_year>
+float calc_dp(float cos_phi, float sin_phi, float cos_theta, float sin_theta, float cos_year, float sin_year) {
+    return (cos_phi * cos_theta * COS_ALPHA + sin_phi * SIN_ALPHA) * cos_year
+        + cos_phi * sin_theta * sin_year;
+}
 
 // Main rendering function for our only layer
 void layer_update_callback(Layer *me, GContext* ctx) {
@@ -85,22 +123,17 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         for (x = 0; x < 216; x++) {
             // Calculate the Earth's daily rotation
             int x_offset = x + g_time_offset + (g_year_offset * 59 / 100);
-            float cos_theta = THETA_TABLE[x_offset % 216];
-            float sin_theta = THETA_TABLE[(x_offset + 54) % 216];
+            float cos_theta, sin_theta;
+            calc_theta(x_offset, &cos_theta, &sin_theta);
 
             for (y = 0; y < 168; y++) {
                 // Get the input map's pixel value
                 int addr = x + y * 216;
                 char in_val = WORLD_MAP_IMAGE[addr/8] & (1<<(addr%8));
+                float cos_phi, sin_phi, dp;
 
-                // Calculate the latitude
-                float cos_phi = PHI_TABLE[y];
-                float sin_phi = (y <= 84) ? PHI_TABLE[84 - y] : -1 * PHI_TABLE[168 - (y - 84)];
-
-                // Calculate the dot product of the position on the earth and the direction to the sun:
-                // <cos(phi)*cos(theta)*cos(alpha) + sin(phi)*sin(alpha), cos(phi)*sin(theta)> * <cos_year, sin_year>
-                float dp = (cos_phi * cos_theta * COS_ALPHA + sin_phi * SIN_ALPHA) * cos_year
-                    + cos_phi * sin_theta * sin_year;
+                calc_phi(y, &cos_phi, &sin_phi);
+                dp = calc_dp(cos_phi, sin_phi, cos_theta, sin_theta, cos_year, sin_year);
 
                 // If the dot product is negative, the sun is up.
                 // If the dot product is positive, it's nighttime.
@@ -127,6 +160,75 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
     // Render the map
     graphics_draw_bitmap_in_rect(ctx, &g_bmp, destination);
+
+    if (g_draw_sunrise) {
+        // Text to show the time for the next sunrise/sunset
+        char g_sunrise[32];
+
+        // Calculate sunrise/sunset time
+        float last_dp = 0;
+        int cross_x = -1;
+
+        // Calculate the latitude
+        float cos_phi, sin_phi;
+        calc_phi(g_home_pos[1], &cos_phi, &sin_phi);
+
+        // If this happens to you, I feel sorry for you
+        strcpy(g_sunrise, "No sunrise/sunset");
+
+        // Traverse from home coordinates going East until we hit a boundary
+        for (x = 0; x < 216; x++) {
+            // Calculate the Earth's daily rotation
+            int x_offset = g_home_pos[0] + x + g_time_offset + (g_year_offset * 59 / 100);
+            float cos_theta, sin_theta, dp;
+
+            calc_theta(x_offset, &cos_theta, &sin_theta);
+            dp = calc_dp(cos_phi, sin_phi, cos_theta, sin_theta, cos_year, sin_year);
+
+            if (last_dp < 0 && dp > 0) {
+                // Sunset!
+                strcpy(g_sunrise, "Sunset:  ");
+                cross_x = x - dp / (dp - last_dp);
+                break;
+            } else if (last_dp > 0 && dp < 0) {
+                // Sunrise!
+                strcpy(g_sunrise, "Sunrise: ");
+                cross_x = x + dp / (last_dp - dp);
+                break;
+            }
+
+            // No boundary; keep going
+            last_dp = dp;
+        }
+
+        if (cross_x >= 0) {
+            // Calculate the time of the crossing
+            PblTm time;
+            int minutes = g_minute + (cross_x * 1440) / 216;
+
+            time.tm_hour = g_hour + (minutes / 60);
+            time.tm_min = minutes % 60;
+
+            string_format_time(&g_sunrise[9], 20, "%I:%M", &time);
+        }
+
+        graphics_context_set_fill_color(ctx, GColorBlack);
+        graphics_fill_rect(ctx, GRect(g_home_pos[0]-2, g_home_pos[1]-2, 5, 5), 0, GCornerNone);
+        graphics_context_set_fill_color(ctx, GColorWhite);
+        graphics_fill_rect(ctx, GRect(g_home_pos[0]-1, g_home_pos[1]-1, 3, 3), 0, GCornerNone);
+
+        graphics_context_set_fill_color(ctx, GColorWhite);
+        graphics_fill_rect(ctx, GRect(0, 168-16, 144, 16), 0, GCornerNone);
+
+        graphics_context_set_text_color(ctx, GColorBlack);
+        graphics_text_draw(ctx,
+                g_sunrise,
+                fonts_get_system_font(FONT_KEY_FONT_FALLBACK),
+                GRect(0, 168-16, 144, 16),
+                GTextOverflowModeWordWrap,
+                GTextAlignmentLeft,
+                NULL);
+    }
 
     // Unset the "needs refresh" flag
     g_needs_refresh = 0;
@@ -171,10 +273,14 @@ void down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
 }
 
 
-// Handle click on the "select" button (currently unused)
+// Handle click on the "select" button (toggles sunrise/sunset overlay)
 void select_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
     (void)recognizer;
     (void)window;
+
+    g_draw_sunrise = 1 - g_draw_sunrise;
+    layer_mark_dirty(&g_layer);
+    
 }
 
 
@@ -208,7 +314,7 @@ void handle_init(AppContextRef ctx) {
 
     // Create fullscreen window
     window_init(&g_window, "WorldMap");
-    g_window.is_fullscreen = 1;
+    window_set_fullscreen(&g_window, 1);
     window_stack_push(&g_window, true /* Animated */);
 
     // Attach our desired button functionality
@@ -230,6 +336,16 @@ void handle_init(AppContextRef ctx) {
         g_bmpdata[y] ^= 0xFF;
     }
 
+    // Calculate "home" position
+    g_home_pos[0] = (HOME_LONGITUDE + 180) * 0.6; // 0-216
+    g_home_pos[1] = 0;
+    for (y = 0; y < 168; y++) {
+        if (LATITUDE_TABLE[y] < HOME_LATITUDE) {
+            g_home_pos[1] = y;
+            break;
+        }
+    }
+
     // After half a second start rendering the sunlight map, as it is slow
     app_timer_send_event(ctx, 500 /* milliseconds */, TIMER_ID_REFRESH);
 }
@@ -247,6 +363,9 @@ void update_time(PblTm *time) {
         // Time-of-day offset (0-216)
         utc_hour = time->tm_hour - TZ_OFFSET + 12;
         g_time_offset = (((time->tm_min + utc_hour * 60) * 3) / 20) % 216;
+
+        g_hour = time->tm_hour;
+        g_minute = time->tm_min;
 
         // Trigger a refresh
         g_needs_refresh = 1;
