@@ -195,7 +195,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
             // Sunrise
             minutes = g_minute + (sunrise_x * 1440) / 216;
-            time.tm_hour = g_hour + (minutes / 60);
+            time.tm_hour = (g_hour + (minutes / 60)) % 24;
             time.tm_min = minutes % 60;
             if (clock_is_24h_style()) {
                 string_format_time(time_buf, 20, "%H:%M", &time);
@@ -209,7 +209,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
             // Sunset
             // Sunset times seem to be about 25 minutes off from official tables
             minutes = g_minute + (sunset_x * 1440) / 216 + 25;
-            time.tm_hour = g_hour + (minutes / 60);
+            time.tm_hour = (g_hour + (minutes / 60)) % 24;
             time.tm_min = minutes % 60;
             if (clock_is_24h_style()) {
                 string_format_time(time_buf, 20, "%H:%M", &time);
