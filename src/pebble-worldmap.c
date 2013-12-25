@@ -1,6 +1,5 @@
-#include "pebble_os.h"
-#include "pebble_app.h"
-#include "pebble_fonts.h"
+#include <pebble.h>
+#include <time.h>
 
 #include "worldmap_image.h"
 #include "angle_tables.h"
@@ -8,13 +7,6 @@
 
 // Can be used to distinguish between multiple timers in your app
 #define TIMER_ID_REFRESH 1
-
-#define MY_UUID { 0xB0, 0x17, 0x45, 0xA9, 0xE2, 0x09, 0x44, 0x1C, 0xAB, 0xF2, 0x8F, 0xF2, 0xE5, 0x1A, 0xED, 0xD2 }
-PBL_APP_INFO(MY_UUID,
-             "World Map", "Tom Yedwab",
-             1, 0, /* App version */
-             RESOURCE_ID_IMAGE_MENU_ICON,
-             APP_INFO_STANDARD_APP);
 
 
 // Reverse-engineered internals of the GBitmap struct
@@ -35,10 +27,10 @@ void init_bitmap(GBitmap *bmp, int width, int height, void *data) {
  */
 
 // Window object
-Window g_window;
+Window *g_window;
 
 // Layer to draw on
-Layer g_layer;
+Layer *g_layer;
 
 // Bitmap we're drawing into
 GBitmap g_bmp;
@@ -67,6 +59,12 @@ int g_year_offset = 0;
 // Stored time information
 int g_hour = 0;
 int g_minute = 0;
+
+// Last stored scroll position
+int g_last_offset = 0;
+
+
+void handle_timer(void *data);
 
 
 // Calculate the longitude cos/sin
@@ -189,7 +187,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
         if (sunrise_x >= 0 && sunset_x >= 0) {
             // Calculate the time of the crossing
-            PblTm time;
+            struct tm time;
             int minutes;
             char time_buf[6];
 
@@ -198,9 +196,9 @@ void layer_update_callback(Layer *me, GContext* ctx) {
             time.tm_hour = (g_hour + (minutes / 60)) % 24;
             time.tm_min = minutes % 60;
             if (clock_is_24h_style()) {
-                string_format_time(time_buf, 20, "%H:%M", &time);
+                strftime(time_buf, 20, "%H:%M", &time);
             } else {
-                string_format_time(time_buf, 20, "%I:%M%p", &time);
+                strftime(time_buf, 20, "%I:%M%p", &time);
             }
 
             strcpy(g_sunrise, "rise ");
@@ -212,9 +210,9 @@ void layer_update_callback(Layer *me, GContext* ctx) {
             time.tm_hour = (g_hour + (minutes / 60)) % 24;
             time.tm_min = minutes % 60;
             if (clock_is_24h_style()) {
-                string_format_time(time_buf, 20, "%H:%M", &time);
+                strftime(time_buf, 20, "%H:%M", &time);
             } else {
-                string_format_time(time_buf, 20, "%I:%M%p", &time);
+                strftime(time_buf, 20, "%I:%M%p", &time);
             }
 
             strcat(g_sunrise, " set ");
@@ -233,7 +231,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         graphics_fill_rect(ctx, GRect(0, 168-16, 144, 16), 0, GCornerNone);
 
         graphics_context_set_text_color(ctx, GColorBlack);
-        graphics_text_draw(ctx,
+        graphics_draw_text(ctx,
                 g_sunrise,
                 fonts_get_system_font(FONT_KEY_FONT_FALLBACK),
                 GRect(5, 168-16, 144-5, 16),
@@ -249,8 +247,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
 // Animate the layer position to a given X offset
 void animate_layer(int destination) {
-    static PropertyAnimation prop_ani;
-    static GRect prop_rect = {
+    static GRect from_rect = {
         .origin = {
             .x = 0,
             .y = 0
@@ -260,10 +257,24 @@ void animate_layer(int destination) {
             .h = 168
         }
     };
-    prop_rect.origin.x = destination;
-    property_animation_init_layer_frame(&prop_ani, &g_layer, NULL, &prop_rect);
-    prop_ani.animation.duration_ms = 1000; // 1 second animation
-    animation_schedule(&prop_ani.animation);
+    static GRect to_rect = {
+        .origin = {
+            .x = 0,
+            .y = 0
+        },
+        .size = {
+            .w = 216,
+            .h = 168
+        }
+    };
+    from_rect.origin.x = g_last_offset;
+    to_rect.origin.x = destination;
+    PropertyAnimation *prop_anim = property_animation_create_layer_frame(
+            g_layer, &from_rect, &to_rect);
+    animation_set_duration((Animation*)prop_anim, 1000);
+    animation_schedule((Animation*)prop_anim);
+
+    g_last_offset = destination;
 }
 
 
@@ -291,51 +302,35 @@ void select_single_click_handler(ClickRecognizerRef recognizer, Window *window) 
     (void)window;
 
     g_draw_sunrise = 1 - g_draw_sunrise;
-    layer_mark_dirty(&g_layer);
+    layer_mark_dirty(g_layer);
     
 }
 
 
-// Handle long press on the "select" button (currently unused)
-void select_long_click_handler(ClickRecognizerRef recognizer, Window *window) {
-  (void)recognizer;
-  (void)window;
-}
-
-
 // Register our input handlers
-void click_config_provider(ClickConfig **config, Window *window) {
-  (void)window;
-
-  config[BUTTON_ID_SELECT]->click.handler = (ClickHandler) select_single_click_handler;
-
-  config[BUTTON_ID_SELECT]->long_click.handler = (ClickHandler) select_long_click_handler;
-
-  config[BUTTON_ID_UP]->click.handler = (ClickHandler) up_single_click_handler;
-  config[BUTTON_ID_UP]->click.repeat_interval_ms = 100;
-
-  config[BUTTON_ID_DOWN]->click.handler = (ClickHandler) down_single_click_handler;
-  config[BUTTON_ID_DOWN]->click.repeat_interval_ms = 100;
+void click_config_provider(void *context) {
+    window_set_click_context(BUTTON_ID_UP, context);
+    window_single_repeating_click_subscribe(BUTTON_ID_UP, 100, (ClickHandler) up_single_click_handler);
+    window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 100, (ClickHandler) down_single_click_handler);
+    window_single_click_subscribe(BUTTON_ID_SELECT, (ClickHandler) select_single_click_handler);
 }
 
 
 // Initialization routine
-void handle_init(AppContextRef ctx) {
-    (void)ctx;
+void handle_init() {
     int y;
 
     // Create fullscreen window
-    window_init(&g_window, "WorldMap");
-    window_set_fullscreen(&g_window, 1);
-    window_stack_push(&g_window, true /* Animated */);
+    g_window = window_create();
+    window_set_fullscreen(g_window, 1);
+    window_stack_push(g_window, true /* Animated */);
 
     // Attach our desired button functionality
-    window_set_click_config_provider(&g_window, (ClickConfigProvider) click_config_provider);
+    window_set_click_config_provider(g_window, (ClickConfigProvider) click_config_provider);
 
     // Init the layer for the map display
-    layer_init(&g_layer, g_window.layer.frame);
-    g_layer.update_proc = &layer_update_callback;
-    layer_add_child(&g_window.layer, &g_layer);
+    g_layer = window_get_root_layer(g_window);
+    layer_set_update_proc(g_layer, &layer_update_callback);
 
     // Initialize the bitmap structure
     init_bitmap(&g_bmp, 224, 168, g_bmpdata);
@@ -359,12 +354,18 @@ void handle_init(AppContextRef ctx) {
     }
 
     // After half a second start rendering the sunlight map, as it is slow
-    app_timer_send_event(ctx, 500 /* milliseconds */, TIMER_ID_REFRESH);
+    app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
+}
+
+
+void handle_deinit() {
+    layer_destroy(g_layer);
+    window_destroy(g_window);
 }
 
 
 // Helper to update internal state based on the current time & date
-void update_time(PblTm *time) {
+void update_time(struct tm *time) {
     // Don't do anything until we're fully visible on-screen
     if (g_loaded) {
         int utc_hour;
@@ -381,13 +382,14 @@ void update_time(PblTm *time) {
 
         // Trigger a refresh
         g_needs_refresh = 1;
-        layer_mark_dirty(&g_layer);
+        layer_mark_dirty(g_layer);
     }
 }
 
 
 // Handle timer callbacks
-void handle_timer(AppContextRef ctx, AppTimerHandle handle, uint32_t cookie) {
+void handle_timer(void *data) {
+    int cookie = (int)data;
     if (cookie == TIMER_ID_REFRESH) {
         // Indicate that we can start expensive rendering
         g_loaded = 1;
@@ -396,28 +398,24 @@ void handle_timer(AppContextRef ctx, AppTimerHandle handle, uint32_t cookie) {
         g_needs_refresh = 1;
 
         // Update the time-based state
-        PblTm time;
-        get_time(&time);
-        update_time(&time);
+        time_t rawtime;
+        time(&rawtime);
+        struct tm *tick_time = localtime(&rawtime);
+        update_time(tick_time);
     }
 }
 
 
 // Handle clock ticks
-void handle_tick(AppContextRef ctx, PebbleTickEvent *event) {
-    update_time(event->tick_time);
+void handle_tick(struct tm *tick_time, TimeUnits units_changed) {
+    update_time(tick_time);
 }
 
 
 // Main entry point for the app
-void pbl_main(void *params) {
-    PebbleAppHandlers handlers = {
-        .init_handler = &handle_init,
-        .timer_handler = &handle_timer,
-        .tick_info = {
-            .tick_handler = &handle_tick,
-            .tick_units = HOUR_UNIT
-        },
-    };
-    app_event_loop(params, &handlers);
+int main(void) {
+    handle_init();
+    tick_timer_service_subscribe(HOUR_UNIT, handle_tick);
+    app_event_loop();
+    handle_deinit();
 }

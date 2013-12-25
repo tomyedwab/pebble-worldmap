@@ -1,0 +1,16 @@
+{
+  "uuid": "b01745a9-e209-441c-abf2-8ff2e51aedd2",
+  "shortName": "World Map",
+  "longName": "World Map",
+  "companyName": "Tom Yedwab",
+  "versionCode": 1,
+  "versionLabel": "1.0.0",
+  "watchapp": {
+    "watchface": false
+  },
+  "appKeys": {},
+  "resources": {
+    "media": [
+    ]
+  }
+}
