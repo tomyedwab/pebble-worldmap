@@ -3,7 +3,6 @@
 
 #include "worldmap_image.h"
 #include "angle_tables.h"
-#include "config.h"
 
 // Can be used to distinguish between multiple timers in your app
 #define TIMER_ID_REFRESH 1
@@ -370,6 +369,15 @@ void settings_layer_update_callback(Layer *me, GContext* ctx) {
     graphics_context_set_text_color(ctx, GColorBlack);
 
     rect.origin.y += 16;
+
+    graphics_draw_text(
+            ctx,
+            "Push <back> to exit",
+            fonts_get_system_font(FONT_KEY_GOTHIC_14),
+            rect,
+            GTextOverflowModeWordWrap,
+            GTextAlignmentLeft,
+            NULL);
 }
 
 
@@ -528,6 +536,7 @@ void settings_click_config_provider(void *context) {
 // Initialization routine
 void handle_init() {
     int y;
+    int show_settings = 0;
 
     // Create fullscreen window
     g_window = window_create();
@@ -553,6 +562,10 @@ void handle_init() {
     }
 
     // Read settings
+    if (!persist_exists(PERSIST_KEY_SHOW_HOME)) {
+        show_settings = 1;
+    }
+
     g_draw_sunrise = persist_read_int(PERSIST_KEY_SHOW_HOME);
     home_latitude = persist_read_int(PERSIST_KEY_LATITUDE);
     home_longitude = persist_read_int(PERSIST_KEY_LONGITUDE);
@@ -572,6 +585,12 @@ void handle_init() {
 
     // After half a second start rendering the sunlight map, as it is slow
     app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
+
+    // If there are no settings, show settings dialog at startup
+    if (show_settings) {
+        g_selected_option = 0;
+        window_stack_push(g_window_settings, 1);
+    }
 }
 
 
