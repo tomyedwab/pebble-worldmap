@@ -92,7 +92,10 @@ void settings_layer_update_callback(Layer *me, GContext* ctx) {
         graphics_fill_rect(ctx, rect, 0, GCornerNone);
         graphics_context_set_text_color(ctx, GColorWhite);
     }
-    snprintf(pos_str, 12, (g_selected_option == 1 && g_edit_option) ? "> %d <" : "%d", home_latitude);
+    snprintf(pos_str, 12,
+            (g_selected_option == 1 && g_edit_option) ? "> %d %s <" : "%d %s",
+            (home_latitude >= 0) ? home_latitude : -home_latitude,
+            (home_latitude >= 0) ? "N" : "S");
     graphics_draw_text(
             ctx,
             pos_str,
@@ -120,7 +123,10 @@ void settings_layer_update_callback(Layer *me, GContext* ctx) {
         graphics_fill_rect(ctx, rect, 0, GCornerNone);
         graphics_context_set_text_color(ctx, GColorWhite);
     }
-    snprintf(pos_str, 12, (g_selected_option == 2 && g_edit_option) ? "> %d <" : "%d", home_longitude);
+    snprintf(pos_str, 12,
+            (g_selected_option == 2 && g_edit_option) ? "> %d %s <" : "%d %s",
+            (home_longitude >= 0) ? home_longitude : -home_longitude,
+            (home_longitude >= 0) ? "E" : "W");
     graphics_draw_text(
             ctx,
             pos_str,
@@ -167,11 +173,12 @@ void setting_up_single_click_handler(ClickRecognizerRef recognizer, Window *wind
                 persist_write_int(PERSIST_KEY_LATITUDE, home_latitude);
             }
         } else if (g_selected_option == 2) {
-            if (home_longitude < 180) {
-                home_longitude += 1;
-                persist_write_int(PERSIST_KEY_LONGITUDE, home_longitude);
-                app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
+            home_longitude += 1;
+            if (home_longitude == 180) {
+                home_longitude = -180;
             }
+            persist_write_int(PERSIST_KEY_LONGITUDE, home_longitude);
+            app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
         }
         update_home_pos();
     } else {
@@ -194,11 +201,12 @@ void setting_down_single_click_handler(ClickRecognizerRef recognizer, Window *wi
                 persist_write_int(PERSIST_KEY_LATITUDE, home_latitude);
             }
         } else if (g_selected_option == 2) {
-            if (home_longitude > -180) {
-                home_longitude -= 1;
-                persist_write_int(PERSIST_KEY_LONGITUDE, home_longitude);
-                app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
+            home_longitude -= 1;
+            if (home_longitude == -181) {
+                home_longitude = 179;
             }
+            persist_write_int(PERSIST_KEY_LONGITUDE, home_longitude);
+            app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
         }
         update_home_pos();
     } else {
