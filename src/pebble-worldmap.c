@@ -16,7 +16,9 @@ int g_needs_refresh = 0;
 // Latitude and longitude of "home"
 int home_latitude;
 int home_longitude;
-// TODO: Time zone
+
+// Time zone of "home" (in half-hours relative to UTC, e.g. -24-24)
+int home_timezone;
 
 // Enable drawing of sunrise/sunset times
 int g_draw_sunrise = 0;
@@ -105,8 +107,9 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         // Render the image in WORLD_MAP_IMAGE into the bmpdata bitmap
         memset(g_bmpdata, 0, ROW_SIZE(224)*168);
         for (x = 0; x < 216; x++) {
-            // Calculate the Earth's daily rotation
-            int x_offset = x + g_time_offset + (g_year_offset * 59 / 100);
+            // Calculate the Earth's daily rotation (rotates once every 24 hours
+            // plus once every year).
+            int x_offset = x + g_time_offset + (g_year_offset * 6 / 10);
             float cos_theta, sin_theta;
             calc_theta(x_offset, &cos_theta, &sin_theta);
 
@@ -159,8 +162,9 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
         // Traverse from home coordinates going East until we hit a boundary
         for (x = 0; x < 216; x++) {
-            // Calculate the Earth's daily rotation
-            int x_offset = g_home_pos[0] + x + g_time_offset + (g_year_offset * 59 / 100);
+            // Calculate the Earth's daily rotation (rotates once every 24 hours
+            // plus once every year)
+            int x_offset = g_home_pos[0] + x + g_time_offset + (g_year_offset * 6 / 10);
             float cos_theta, sin_theta, dp;
 
             calc_theta(x_offset, &cos_theta, &sin_theta);
@@ -198,7 +202,6 @@ void layer_update_callback(Layer *me, GContext* ctx) {
             strcat(g_sunrise, time_buf);
 
             // Sunset
-            // Sunset times seem to be about 25 minutes off from official tables
             minutes = g_minute + (sunset_x * 1440) / 216 + 25;
             time.tm_hour = (g_hour + (minutes / 60)) % 24;
             time.tm_min = minutes % 60;
@@ -304,7 +307,6 @@ void click_config_provider(void *context) {
 // Initialization routine
 void handle_init() {
     int y;
-    int show_settings = 0;
 
     // Create fullscreen window
     g_window = window_create();
@@ -329,28 +331,11 @@ void handle_init() {
         g_bmpdata[y] ^= 0xFF;
     }
 
-    // Read settings
-    if (!persist_exists(PERSIST_KEY_SHOW_HOME)) {
-        show_settings = 1;
-    }
-
-    g_draw_sunrise = persist_read_int(PERSIST_KEY_SHOW_HOME);
-    home_latitude = persist_read_int(PERSIST_KEY_LATITUDE);
-    home_longitude = persist_read_int(PERSIST_KEY_LONGITUDE);
-
-    // Calculate "home" position
-    update_home_pos();
-
     // Initialize the settings window
     init_settings();
 
     // After half a second start rendering the sunlight map, as it is slow
     app_timer_register(500, handle_timer, (void *)TIMER_ID_REFRESH);
-
-    // If there are no settings, show settings dialog at startup
-    if (show_settings) {
-        show_settings_window();
-    }
 }
 
 
@@ -364,14 +349,14 @@ void update_time(struct tm *time) {
     // Don't do anything until we're fully visible on-screen
     if (g_loaded) {
         int utc_hour;
-        int tz_offset = home_longitude / 15;
 
         // Time-of-year offset (0-365)
-        g_year_offset = time->tm_yday % 365;
+        // 9-day offset accounts for time between winter solstice and new year's
+        g_year_offset = (time->tm_yday + 8) % 365;
 
         // Time-of-day offset (0-216)
-        utc_hour = time->tm_hour - tz_offset + 12;
-        g_time_offset = (((time->tm_min + utc_hour * 60) * 3) / 20) % 216;
+        utc_hour = time->tm_hour * 2 + 24 - home_timezone;
+        g_time_offset = (((time->tm_min + utc_hour * 30) * 3) / 20) % 216;
 
         g_hour = time->tm_hour;
         g_minute = time->tm_min;
