@@ -29,6 +29,9 @@ int g_home_pos[] = {0, 0};
 // The time-of-day offset (0-215)
 int g_time_offset = 0;
 
+// An offset to correct for true solar time (-3-1)
+int g_solar_offset = 0;
+
 // The time-of-year offset (0-365)
 int g_year_offset = 0;
 
@@ -86,6 +89,24 @@ float calc_dp(float cos_phi, float sin_phi, float cos_theta, float sin_theta, fl
         + cos_phi * sin_theta * sin_year;
 }
 
+// Shift solar noon to account for the discrepancy with true solar time
+// From http://en.wikipedia.org/wiki/Equation_of_time, first equation
+int equation_of_time(int date) {
+    if (date < 6) { return -1; }
+    if (date < 29) { return -2; }
+    if (date < 55) { return -3; }
+    if (date < 81) { return -2; }
+    if (date < -104) { return -1; }
+    if (date < 163) { return 0; }
+    if (date < 241) { return -1; }
+    if (date < 259) { return 0; }
+    if (date < 279) { return 1; }
+    if (date < 324) { return 2; }
+    if (date < 342) { return 1; }
+    if (date < 356) { return 0; }
+    return -1;
+}
+
 // Main rendering function for our only layer
 void layer_update_callback(Layer *me, GContext* ctx) {
     (void)me;
@@ -109,7 +130,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         for (x = 0; x < 216; x++) {
             // Calculate the Earth's daily rotation (rotates once every 24 hours
             // plus once every year).
-            int x_offset = x + g_time_offset + (g_year_offset * 6 / 10);
+            int x_offset = x + g_time_offset - g_solar_offset + (g_year_offset * 6 / 10);
             float cos_theta, sin_theta;
             calc_theta(x_offset, &cos_theta, &sin_theta);
 
@@ -164,7 +185,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
         for (x = 0; x < 216; x++) {
             // Calculate the Earth's daily rotation (rotates once every 24 hours
             // plus once every year)
-            int x_offset = g_home_pos[0] + x + g_time_offset + (g_year_offset * 6 / 10);
+            int x_offset = g_home_pos[0] + x + g_time_offset - g_solar_offset + (g_year_offset * 6 / 10);
             float cos_theta, sin_theta, dp;
 
             calc_theta(x_offset, &cos_theta, &sin_theta);
@@ -351,12 +372,14 @@ void update_time(struct tm *time) {
         int utc_hour;
 
         // Time-of-year offset (0-365)
-        // 9-day offset accounts for time between winter solstice and new year's
+        // 8-day offset accounts for time between winter solstice and new year's
         g_year_offset = (time->tm_yday + 8) % 365;
 
         // Time-of-day offset (0-216)
         utc_hour = time->tm_hour * 2 + 24 - home_timezone;
         g_time_offset = (((time->tm_min + utc_hour * 30) * 3) / 20) % 216;
+
+        g_solar_offset = equation_of_time(time->tm_yday);
 
         g_hour = time->tm_hour;
         g_minute = time->tm_min;
